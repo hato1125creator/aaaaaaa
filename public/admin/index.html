@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理者画面とQRコードスキャナー</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.3/css/bulma.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        #qr-reader {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        #result {
+            margin-top: 20px;
+        }
+        .qr-code {
+            max-width: 100px;
+            height: auto;
+        }
+        .notification.is-visible {
+            visibility: visible;
+            opacity: 1;
+            transition: opacity 0.5s ease-in-out;
+        }
+        .notification.is-hidden {
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+        }
+        .notification.is-error {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+        }
+        .chart-container {
+            position: relative;
+            height: 40vh;
+            width: 80vw;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/gh/mebjas/html5-qrcode@latest/minified/html5-qrcode.min.js"></script>
+</head>
+<body>
+    <!-- ログインフォーム -->
+    <div id="login-modal" class="modal">
+        <div class="modal-background" onclick="closeLoginModal()"></div>
+        <div class="modal-content">
+            <div class="box">
+                <h2 class="subtitle">ログイン</h2>
+                <div class="field">
+                    <label class="label">ユーザー名</label>
+                    <div class="control">
+                        <input class="input" type="text" id="login-username" placeholder="ユーザー名を入力">
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label">パスワード</label>
+                    <div class="control">
+                        <input class="input" type="password" id="login-password" placeholder="パスワードを入力">
+                    </div>
+                </div>
+                <div class="field">
+                    <button class="button is-success" onclick="login()">ログイン</button>
+                </div>
+                <div id="login-error-message" class="notification is-danger is-hidden"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="error-message" class="notification is-danger is-hidden is-error"></div>
+    <div id="success-message" class="notification is-success is-hidden is-error"></div>
+
+    <nav class="navbar is-light" id="navbar" style="display: none;">
+        <div class="navbar-menu">
+            <div class="navbar-start">
+                <a class="navbar-item" href="/admin">予約一覧</a>
+                <a class="navbar-item" href="/guest">ゲスト画面</a>
+            </div>
+            <div class="navbar-end">
+                <div class="navbar-item">
+                    <button class="button is-light" onclick="logout()">ログアウト</button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <section class="section" id="main-content" style="display: none;">
+        <div class="container">
+            <h1 class="title">管理者画面</h1>
+            <div class="tabs is-boxed">
+                <ul id="tab-list">
+                    <li class="is-active" data-target="tab-reservations"><a>予約一覧</a></li>
+                    <li data-target="tab-search"><a>ゲスト検索</a></li>
+                    <li data-target="tab-qr"><a>QRコード読み取り</a></li>
+                    <li data-target="tab-invites"><a>招待コード生成</a></li>
+                    <li data-target="tab-history"><a>予約履歴</a></li>
+                    <li data-target="tab-report"><a>レポート</a></li> <!-- レポートタブの追加 -->
+                </ul>
+            </div>
+
+            <div id="tab-reservations" class="tab-content">
+                <h2 class="subtitle">予約一覧</h2>
+                <div class="field has-addons">
+                    <div class="control">
+                        <div class="select">
+                            <select id="status-filter">
+                                <option value="">すべての状態</option>
+                                <option value="checked-in">入場</option>
+                                <option value="cancelled">キャンセル</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="control">
+                        <button class="button is-info" onclick="filterReservations()">フィルター</button>
+                    </div>
+                </div>
+                <table class="table is-fullwidth is-striped">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>名前</th>
+                            <th>連絡先</th>
+                            <th>状態</th>
+                            <th>QRコード</th>
+                            <th>アクション</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reservation-table-body"></tbody>
+                </table>
+            </div>
+
+            <div id="tab-search" class="tab-content is-hidden">
+                <h2 class="subtitle">ゲスト検索</h2>
+                <div class="field has-addons">
+                    <div class="control is-expanded">
+                        <input class="input" type="text" id="search-query" placeholder="検索...">
+                    </div>
+                    <div class="control">
+                        <button class="button is-info" onclick="searchGuests()">検索</button>
+                    </div>
+                </div>
+                <div id="search-results" class="box"></div>
+            </div>
+
+            <div id="tab-qr" class="tab-content is-hidden">
+                <h2 class="subtitle">QRコード読み取り</h2>
+                <div id="qr-container" class="box">
+                    <div id="qr-reader"></div>
+                    <div id="result" class="notification is-info">スキャン結果がここに表示されます。</div>
+                </div>
+            </div>
+
+            <div id="tab-invites" class="tab-content is-hidden">
+                <h2 class="subtitle">招待コード生成</h2>
+                <div class="field">
+                    <input type="number" id="code-count" placeholder="生成するコードの枚数" />
+                    <button class="button is-primary" onclick="generateInviteCodes()">招待コードを生成</button>
+                    <button class="button is-link" onclick="downloadInviteCodes()" id="download-invite-codes" style="display:none;">招待コードをダウンロード</button>
+                </div>
+                <div id="invite-result"></div>
+            </div>
+
+            <div id="tab-history" class="tab-content is-hidden">
+                <h2 class="subtitle">予約履歴</h2>
+                <table class="table is-fullwidth is-striped">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>名前</th>
+                            <th>連絡先</th>
+                            <th>状態</th>
+                            <th>作成日時</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body"></tbody>
+                </table>
+            </div>
+
+            <div id="tab-report" class="tab-content is-hidden"> <!-- レポートセクション -->
+                <h2 class="subtitle">レポート</h2>
+                <div id="report-data">
+                    <button class="button is-primary" onclick="loadReport()">レポートを読み込む</button>
+                    <div class="chart-container">
+                        <canvas id="reportChart"></canvas>
+                    </div>
+                    <div id="report-results" class="box"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 音声ファイル -->
+    <audio id="success-sound" src="success.mp3"></audio>
+
+    <script>
+        let generatedCodes = []; // 生成されたコードを格納する配列
+
+        window.onload = () => {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                document.getElementById('login-modal').classList.add('is-active'); // ログインモーダルを表示
+            } else {
+                // ユーザーがログインしている場合の処理
+                document.getElementById('navbar').style.display = 'flex';
+                document.getElementById('main-content').style.display = 'block';
+                updateReservations(); // ログイン時に予約情報を更新
+                initQrScanner();
+                updateHistory(); // 履歴を初期表示する
+                setInterval(updateReservations, 5000); // 5秒ごとに予約情報を更新
+            }
+        };
+
+        function closeLoginModal() {
+            document.getElementById('login-modal').classList.remove('is-active');
+        }
+
+        function login() {
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+
+            fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    localStorage.setItem('token', data.token); // トークンをローカルストレージに保存
+                    closeLoginModal(); // モーダルを閉じる
+                    window.location.reload(); // ページをリロード
+                } else {
+                    const errorMessage = document.getElementById('login-error-message');
+                    errorMessage.textContent = data.message;
+                    errorMessage.classList.remove('is-hidden');
+                }
+            })
+            .catch(error => {
+                console.error('ログインエラー:', error);
+                const errorMessage = document.getElementById('login-error-message');
+                errorMessage.textContent = 'ログイン中にエラーが発生しました。';
+                errorMessage.classList.remove('is-hidden');
+            });
+        }
+
+        function logout() {
+            localStorage.removeItem('token'); // トークンを削除
+            window.location.reload(); // ページをリロードしてログイン画面を表示
+        }
+
+        function initQrScanner() {
+    const html5QrCode = new Html5Qrcode("qr-reader");
+    html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText, decodedResult) => {
+            console.log('QRコードスキャン成功:', decodedText);
+            document.getElementById('result').innerHTML = `<h3 class="title is-4">スキャン結果: ${decodedText}</h3>`;
+            verifyReservation(decodedText);
+        }
+    ).catch(error => {
+        console.error('QRコードスキャンエラー:', error);
+        showError('QRコードのスキャンに失敗しました');
+    });
+}
+
+function verifyReservation(decodedText) {
+    let id;
+    try {
+        const url = new URL(decodedText);
+        id = url.searchParams.get('id'); // QRコードからIDを取得
+
+        if (!id) {
+            showError('QRコードに無効なIDが含まれています。');
+            return;
+        }
+    } catch (error) {
+        console.error('URL解析エラー:', error);
+        showError('無効なQRコードです。正しい形式のQRコードをスキャンしてください。');
+        return;
+    }
+
+    showLoadingMessage('予約確認中...');
+
+    console.log('準備完了: 予約確認リクエストを送信。QRデータ:', decodedText); // デバッグ用
+
+    fetch(`/api/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ qrData: decodedText })
+    })
+    .then(response => {
+        console.log('サーバーへのリクエスト成功:', response); // デバッグ用
+
+        // ステータスコードをチェック
+        if (!response.ok) {
+            throw new Error('サーバーからのエラー'); // ステータスコードが200以外の場合
+        }
+        return response.json();
+    })
+    .then(data => {
+        console.log('サーバーからの応答:', data);
+        if (data.message === '入場が承認されました') {
+            displayReservationDetails(data.reservation);
+            showSuccess('入場が承認されました');
+            playSuccessSound(); // 音を再生
+        } else {
+            showError(data.message || '予約が確認できませんでした');
+        }
+    })
+    .catch(error => {
+        console.error('予約確認エラー:', error);
+        showError('予約確認に失敗しました。');
+    });
+}
+
+function playSuccessSound() {
+    const sound = document.getElementById('success-sound');
+    sound.play().catch(error => {
+        console.log('音声再生エラー:', error);
+    });
+}
+
+function showLoadingMessage(message) {
+    document.getElementById('result').innerHTML = `<h3 class="title is-4">${message}</h3>`;
+}
+
+function showError(message) {
+    const errorMessage = document.getElementById('error-message');
+    errorMessage.textContent = message;
+    errorMessage.classList.remove('is-hidden');
+    errorMessage.classList.add('is-visible');
+    setTimeout(() => {
+        errorMessage.classList.remove('is-visible');
+        errorMessage.classList.add('is-hidden');
+    }, 3000);
+}
+
+function showSuccess(message) {
+    const successMessage = document.getElementById('success-message');
+    successMessage.textContent = message;
+    successMessage.classList.remove('is-hidden');
+    successMessage.classList.add('is-visible');
+    setTimeout(() => {
+        successMessage.classList.remove('is-visible');
+        successMessage.classList.add('is-hidden');
+    }, 3000);
+}
+
+function displayReservationDetails(reservation) {
+    document.getElementById('result').innerHTML = `
+        <h3 class="title is-4">入場が承認されました</h3>
+        <ul>
+            <li><strong>ID:</strong> ${reservation.id}</li>
+            <li><strong>名前:</strong> ${reservation.name}</li>
+            <li><strong>連絡先:</strong> ${reservation.contact}</li>
+            <li><strong>関係:</strong> ${reservation.relationship}</li>
+            <li><strong>ステータス:</strong> ${reservation.status}</li>
+            <li><strong>作成日時:</strong> ${new Date(reservation.created_at).toLocaleString()}</li>
+        </ul>
+    `;
+}
+        function generateInviteCodes() {
+            const codeCount = document.getElementById('code-count').value || 100;
+            fetch('/api/generate-invite-codes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ count: codeCount })
+            })
+            .then(response => response.json())
+            .then(data => {
+                generatedCodes = data.codes;
+                const resultElement = document.getElementById('invite-result');
+                resultElement.innerHTML = `<h3 class="title is-4">${data.count} 件の招待コードが生成されました。</h3>`;
+                const codeList = generatedCodes.map(code => `<li>${code}</li>`).join('');
+                resultElement.innerHTML += `<ul>${codeList}</ul>`;
+                document.getElementById('download-invite-codes').style.display = 'inline-block';
+            })
+            .catch(error => {
+                console.error('エラー:', error);
+                showError('招待コードの生成中にエラーが発生しました。');
+            });
+        }
+
+        function downloadInviteCodes() {
+            if (generatedCodes.length === 0) {
+                showError('生成された招待コードがありません。');
+                return;
+            }
+
+            const csvContent = "data:text/csv;charset=utf-8," + generatedCodes.join("\n");
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "invite_codes.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        function searchGuests() {
+            const query = document.getElementById('search-query').value;
+            fetch(`/api/search?q=${encodeURIComponent(query)}`)
+                .then(response => response.json())
+                .then(data => {
+                    const searchResults = document.getElementById('search-results');
+                    searchResults.innerHTML = '<h3>検索結果</h3>';
+                    const resultTable = document.createElement('table');
+                    resultTable.classList.add('table', 'is-fullwidth', 'is-striped');
+                    resultTable.innerHTML = `
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>名前</th>
+                                <th>連絡先</th>
+                                <th>状態</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.map(result => `
+                                <tr>
+                                    <td>${result.id}</td>
+                                    <td>${result.name}</td>
+                                    <td>${result.contact}</td>
+                                    <td>${result.status}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    `;
+                    searchResults.appendChild(resultTable);
+                })
+                .catch(error => {
+                    console.error('ゲスト検索エラー:', error);
+                    showError('ゲスト検索に失敗しました');
+                });
+        }
+
+        function loadReport() {
+            fetch('/api/report')
+                .then(response => response.json())
+                .then(data => {
+                    const reportResults = document.getElementById('report-results');
+                    reportResults.innerHTML = `
+                        <h3 class="title is-4">予約レポート</h3>
+                        <p>総予約数: ${data.total_reservations}</p>
+                        <p>入場済み数: ${data.checked_in_count}</p>
+                        <p>キャンセル数: ${data.cancelled_count}</p>
+                    `;
+
+                    // グラフを作成
+                    const ctx = document.getElementById('reportChart').getContext('2d');
+                    const chart = new Chart(ctx, {
+                        type: 'bar',
+                        data: {
+                            labels: ['総予約', '入場済み', 'キャンセル'],
+                            datasets: [{
+                                label: '予約状況',
+                                data: [data.total_reservations, data.checked_in_count, data.cancelled_count],
+                                backgroundColor: [
+                                    'rgba(75, 192, 192, 0.2)',
+                                    'rgba(153, 102, 255, 0.2)',
+                                    'rgba(255, 99, 132, 0.2)'
+                                ],
+                                borderColor: [
+                                    'rgba(75, 192, 192, 1)',
+                                    'rgba(153, 102, 255, 1)',
+                                    'rgba(255, 99, 132, 1)'
+                                ],
+                                borderWidth: 1
+                            }]
+                        },
+                        options: {
+                            scales: {
+                                y: {
+                                    beginAtZero: true
+                                }
+                            }
+                        }
+                    });
+                })
+                .catch(error => {
+                    console.error('レポート読み込みエラー:', error);
+                    showError('レポートの読み込みに失敗しました');
+                });
+        }
+
+        function updateReservations() {
+            const statusFilter = document.getElementById('status-filter').value;
+            const url = statusFilter ? `/api/reservations?status=${statusFilter}` : `/api/reservations`;
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    const tableBody = document.getElementById('reservation-table-body');
+                    tableBody.innerHTML = '';
+                    data.forEach(reservation => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${reservation.id}</td>
+                            <td>${reservation.name}</td>
+                            <td>${reservation.contact}</td>
+                            <td>${reservation.status}</td>
+                            <td><img src="data:image/png;base64,${reservation.qr_code}" class="qr-code" alt="QR Code"></td>
+                            <td>
+                                <button class="button is-success" onclick="updateStatus(${reservation.id}, 'checked-in')">入場</button>
+                                <button class="button is-danger" onclick="updateStatus(${reservation.id}, 'cancelled')">キャンセル</button>
+                                <button class="button is-warning" onclick="deleteReservation(${reservation.id})">削除</button>
+                            </td>
+                        `;
+                        tableBody.appendChild(row);
+                    });
+                })
+                .catch(error => console.error('予約情報取得エラー:', error));
+        }
+
+        function filterReservations() {
+            updateReservations(); // フィルタリングされた予約を更新
+        }
+
+        function updateStatus(id, status) {
+            fetch(`/api/reservations/${id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data.message);
+                showSuccess(data.message);
+                updateReservations();
+            })
+            .catch(error => {
+                console.error('ステータス更新エラー:', error);
+                showError('ステータスの更新に失敗しました');
+            });
+        }
+
+        function deleteReservation(id) {
+            fetch(`/api/reservations/${id}`, {
+                method: 'DELETE'
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data.message);
+                showSuccess(data.message);
+                updateReservations();
+            })
+            .catch(error => {
+                console.error('予約削除エラー:', error);
+                showError('予約の削除に失敗しました');
+            });
+        }
+
+        function updateHistory() {
+            fetch('/api/reservations/history')
+                .then(response => response.json())
+                .then(data => {
+                    const historyTableBody = document.getElementById('history-table-body');
+                    historyTableBody.innerHTML = '';
+                    data.forEach(reservation => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${reservation.id}</td>
+                            <td>${reservation.name}</td>
+                            <td>${reservation.contact}</td>
+                            <td>${reservation.status}</td>
+                            <td>${new Date(reservation.created_at).toLocaleString()}</td>
+                        `;
+                        historyTableBody.appendChild(row);
+                    });
+                })
+                .catch(error => console.error('予約履歴取得エラー:', error));
+        }
+
+        // タブの切り替え
+        document.querySelectorAll('.tabs ul li').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.add('is-hidden');
+                });
+                document.querySelector(`#${tab.dataset.target}`).classList.remove('is-hidden');
+                document.querySelectorAll('.tabs ul li').forEach(item => item.classList.remove('is-active'));
+                tab.classList.add('is-active');
+            });
+        });
+    </script>
+</body>
+</html>
